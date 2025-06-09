@@ -4,7 +4,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js"
+    "build": "tsc && chmod 755 build/index.js",
+    "start:stdio": "node build/index.js",
+    "start:http": "node build/http-client.js",
+    "start:api-gateway": "tsc api-gateway-client.ts --outDir build --esModuleInterop true --module Node16 --moduleResolution Node16 --target ES2022 && node build/api-gateway-client.js"
   },
   "keywords": [],
   "author": "",

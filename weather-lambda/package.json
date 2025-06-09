@@ -1,29 +1,24 @@
 {
-  "name": "weather",
+  "name": "weather-lambda",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
-  "bin": {
-    "weather": "./build/index.js"
-  },
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js",
-    "start:stdio": "node build/index.js",
-    "start:http": "node build/http-server.js"
+    "build": "tsc && cp package.json dist/",
+    "package": "npm run build && cd dist && npm install --production && zip -r ../weather-lambda.zip ."
   },
-  "files": [
-    "build"
-  ],
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "AWS Lambda version of the Weather MCP server",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.2",
     "express": "^4.21.2",
+    "serverless-http": "^3.2.0",
     "zod": "^3.24.3"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.136",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.3",
     "typescript": "^5.8.3"
