@@ -210,84 +210,84 @@ class MCPAPIGatewayClient {
       },
     ];
   
-    const response = await this.anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 1000,
-      messages,
-      tools: this.tools,
-    });
-  
     const finalText = [];
-    const toolResults = [];
+    let continueConversation = true;
   
-    for (const content of response.content) {
-      if (content.type === "text") {
-        finalText.push(content.text);
-      } else if (content.type === "tool_use") {
-        const toolName = content.name;
-        const toolArgs = content.input as { [x: string]: unknown } | undefined;
+    while (continueConversation) {
+      const response = await this.anthropic.messages.create({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 1000,
+        messages,
+        tools: this.tools,
+      });
   
-        console.log(`Calling tool ${toolName} with args:`, JSON.stringify(toolArgs, null, 2));
-        
-        try {
-          const result = await this.callTool(toolName, toolArgs);
+      let hasToolUse = false;
+  
+      for (const content of response.content) {
+        if (content.type === "text") {
+          finalText.push(content.text);
+        } else if (content.type === "tool_use") {
+          hasToolUse = true;
+          const toolName = content.name;
+          const toolArgs = content.input as { [x: string]: unknown } | undefined;
+  
+          console.log(`Calling tool ${toolName} with args:`, JSON.stringify(toolArgs, null, 2));
           
-          toolResults.push(result);
-          finalText.push(
-            `[Calling tool ${toolName} with args ${JSON.stringify(toolArgs)}]`
-          );
-    
-          // Extract the actual content from the API Gateway response
-          let toolContent = "";
-          if (result.body) {
-            try {
-              const bodyObj = typeof result.body === 'string' ? JSON.parse(result.body) : result.body;
-              if (bodyObj.result && bodyObj.result.content) {
-                toolContent = bodyObj.result.content;
-              } else if (bodyObj.jsonrpc && bodyObj.result && bodyObj.result.content) {
-                toolContent = bodyObj.result.content;
-              } else if (bodyObj.body) {
-                // Handle nested body structure from API Gateway
-                const nestedBody = typeof bodyObj.body === 'string' ? JSON.parse(bodyObj.body) : bodyObj.body;
-                if (nestedBody.result && nestedBody.result.content) {
-                  toolContent = nestedBody.result.content;
-                } else {
-                  toolContent = "Tool returned: " + JSON.stringify(nestedBody);
+          try {
+            const result = await this.callTool(toolName, toolArgs);
+            
+            // Extract tool content (your existing parsing logic)
+            let toolContent = "";
+            // ... your existing parsing logic here ...
+            
+            console.log("Extracted tool content:", toolContent);
+  
+            // Add the tool result to messages for the next iteration
+            messages.push({
+              role: "assistant", 
+              content: [content] // Include the tool_use content
+            });
+            
+            messages.push({
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: content.id,
+                  content: toolContent
                 }
-              } else {
-                toolContent = "Tool returned: " + JSON.stringify(bodyObj);
-              }
-            } catch (e) {
-              toolContent = "Error parsing tool result: " + JSON.stringify(result.body);
-            }
-          } else {
-            toolContent = "Tool returned: " + JSON.stringify(result);
+              ]
+            });
+  
+          } catch (error) {
+            messages.push({
+              role: "assistant",
+              content: [content]
+            });
+            
+            messages.push({
+              role: "user", 
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: content.id,
+                  content: `Error calling tool ${toolName}: ${error}`
+                }
+              ]
+            });
           }
-          
-          console.log("Extracted tool content:", toolContent);
-    
-          messages.push({
-            role: "user",
-            content: toolContent,
-          });
-    
-          const followUpResponse = await this.anthropic.messages.create({
-            model: "claude-3-5-sonnet-20241022",
-            max_tokens: 1000,
-            messages,
-          });
-    
-          finalText.push(
-            followUpResponse.content[0].type === "text" ? followUpResponse.content[0].text : ""
-          );
-        } catch (error) {
-          finalText.push(`Error calling tool ${toolName}: ${error}`);
         }
       }
-    }
   
-    return finalText.join("\n");
+      // If no tools were used, we're done
+      if (!hasToolUse) {
+        continueConversation = false;
+      }
   }
+
+  return finalText.join("\n");
+}
+
 
   async chatLoop() {
     const rl = readline.createInterface({
