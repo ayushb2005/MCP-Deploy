@@ -4,9 +4,9 @@ import {
   InvokeAgentCommandInput
 } from "@aws-sdk/client-bedrock-agent-runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import readline from "readline/promises";
-import dotenv from "dotenv";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import * as readline from "readline/promises";
+import * as dotenv from "dotenv";
 
 dotenv.config();
 
@@ -23,50 +23,31 @@ interface Tool {
   input_schema: object;
 }
 
-class MCPClient {
+class HTTPMCPClient {
   private mcp: Client;
   private bedrockAgentClient: BedrockAgentRuntimeClient;
-  private transport: StdioClientTransport | null = null;
+  private transport: StreamableHTTPClientTransport | null = null;
   private tools: Tool[] = [];
-  private agentId: string | null = null;
-  private agentAliasId: string | null = null;
+  private agentId: string = "BF9XMRVPZZ";
+  private agentAliasId: string = "BYCXBZM20W";
   private sessionId: string;
   private toolNameMap: Map<string, string> = new Map();
 
-  constructor(agentId?: string, agentAliasId?: string) {
+  constructor() {
     this.bedrockAgentClient = new BedrockAgentRuntimeClient({ region: AWS_REGION });
-    this.mcp = new Client({ name: "mcp-client-bedrock-agent", version: "1.0.0" });
-    this.agentId = agentId || null;
-    this.agentAliasId = agentAliasId || null;
+    this.mcp = new Client({ name: "mcp-http-client-bedrock-agent", version: "1.0.0" });
     this.sessionId = `session-${Date.now()}`;
   }
 
-  async connectToServer(serverScriptPath: string) {
+  async connectToHTTPServer(serverUrl: string = "http://localhost:3001/mcp") {
     try {
-      const isJs = serverScriptPath.endsWith(".js");
-      const isPy = serverScriptPath.endsWith(".py");
-      if (!isJs && !isPy) {
-        throw new Error("Server script must be a .js or .py file");
-      }
-      const command = isPy
-        ? process.platform === "win32"
-          ? "python"
-          : "python3"
-        : process.execPath;
-  
-      this.transport = new StdioClientTransport({
-        command,
-        args: [serverScriptPath],
-      });
+      this.transport = new StreamableHTTPClientTransport(new URL(serverUrl));
       
-      console.log(`Starting MCP server: ${serverScriptPath}`);
-      this.mcp.connect(this.transport);
+      console.log(`Connecting to HTTP MCP server: ${serverUrl}`);
+      await this.mcp.connect(this.transport);
   
-      // Wait a moment for the server to start
+      // Wait a moment for the server to initialize
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Get server capabilities - using custom method since getCapabilities doesn't exist
-      // await this.getServerCapabilities();
       
       const toolsResult = await this.mcp.listTools();
       this.tools = toolsResult.tools.map((tool) => {
@@ -82,16 +63,15 @@ class MCPClient {
       });
       
       console.log(
-        "Connected to server with tools:",
+        "Connected to HTTP server with tools:",
         this.tools.map(({ name }) => name)
       );
       
     } catch (e) {
-      console.error("Failed to connect to MCP server: ", e);
+      console.error("Failed to connect to HTTP MCP server: ", e);
       throw e;
     }
   }
-
 
   // Normalize a name for comparison (remove special chars, lowercase)
   private normalizeName(name: string): string {
@@ -99,10 +79,6 @@ class MCPClient {
   }
 
   async processQuery(query: string) {
-    if (!this.agentId || !this.agentAliasId) {
-      throw new Error("Agent ID and Agent Alias ID must be provided");
-    }
-
     try {
       // Get MCP context
       const mcpContext = await this.getMCPContext();
@@ -121,15 +97,8 @@ class MCPClient {
       
       // Add MCP context as session attributes if supported
       if (Object.keys(mcpContext).length > 0) {
-        // Create session attributes object
         const sessionAttributes: Record<string, string> = {};
-        
-        // Add MCP context as a single attribute
         sessionAttributes["mcp_context"] = JSON.stringify(mcpContext);
-        
-        // Add session attributes to command params
-        // Note: We're using type assertion here since the TypeScript definitions
-        // might not be up to date with the actual API
         (commandParams as any).sessionAttributes = sessionAttributes;
       }
       
@@ -139,6 +108,7 @@ class MCPClient {
       console.log("Invoking Bedrock Agent...");
       const response = await this.bedrockAgentClient.send(command);
       console.log(JSON.stringify(response));
+      
       // Process the streaming response
       let finalText = "";
       
@@ -152,7 +122,6 @@ class MCPClient {
               const textDecoder = new TextDecoder();
               const text = textDecoder.decode(chunk.chunk.bytes);
               finalText += text;
-              // Print each chunk as it arrives
               process.stdout.write(text);
             }
             
@@ -178,15 +147,8 @@ class MCPClient {
                       // Extract parameters from the API input
                       let params: Record<string, any> = {};
                       
-                      // Check for parameters in the parameters array
-                      if (apiInput.parameters && apiInput.parameters.length > 0) {
-                        params = apiInput.parameters.reduce((acc: any, param: any) => {
-                          acc[param.name] = param.value;
-                          return acc;
-                        }, {});
-                      }
-                      // Also check for parameters in the requestBody.content["application/json"].properties array
-                      else if (apiInput.requestBody?.content?.["application/json"]?.properties) {
+                      // Check for parameters in the requestBody.content["application/json"].properties array
+                      if (apiInput.requestBody?.content?.["application/json"]?.properties) {
                         const properties = apiInput.requestBody.content["application/json"].properties;
                         params = properties.reduce((acc: any, prop: any) => {
                           // Convert string numbers to actual numbers if needed
@@ -202,7 +164,7 @@ class MCPClient {
                       console.log(`Extracted parameters for ${toolName}:`, params);
                       
                       // Call the MCP tool
-                      const toolResult = await this.processMCPToolCall(toolName, { apiParams: JSON.stringify(params) });
+                      const toolResult = await this.processMCPToolCall(toolName, params);
                       finalText += toolResult;
                     }
                   }
@@ -213,7 +175,7 @@ class MCPClient {
         }
       } else {
         // Handle non-streaming response
-        finalText = response.completion || "";
+        finalText = String(response.completion || "");
       }
       
       return finalText;
@@ -223,83 +185,21 @@ class MCPClient {
     }
   }
 
-  // Process action groups from the agent response
-  private async processActionGroups(actionGroups: any[]): Promise<string> {
-    let result = "";
-    
-    try {
-      for (const actionGroup of actionGroups) {
-        console.log(`Processing action group: ${actionGroup.actionGroupName || "unnamed"}`);
-        
-        if (!actionGroup.actionGroupExecutions || actionGroup.actionGroupExecutions.length === 0) {
-          console.log("No executions in this action group");
-          continue;
-        }
-        
-        for (const execution of actionGroup.actionGroupExecutions) {
-          if (!execution.apiExecutions || execution.apiExecutions.length === 0) {
-            console.log("No API executions in this execution");
-            continue;
-          }
-          
-          for (const apiExecution of execution.apiExecutions) {
-            console.log(`Processing API execution: ${apiExecution.apiName || "unnamed"}`);
-            
-            // Try to find a matching MCP tool
-            const toolName = this.findMatchingTool(apiExecution.apiName);
-            
-            if (toolName) {
-              result += await this.processMCPToolCall(toolName, apiExecution);
-            } else {
-              // Not an MCP tool or no match found
-              result += `\n\n[Agent used API: ${apiExecution.apiName || "unnamed"}]`;
-              if (apiExecution.apiResponse) {
-                try {
-                  const response = JSON.parse(apiExecution.apiResponse);
-                  result += `\nResponse: ${JSON.stringify(response, null, 2)}`;
-                } catch (e) {
-                  result += `\nResponse: ${apiExecution.apiResponse}`;
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error in processActionGroups:", error);
-      result += `\n\nError processing action groups: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    
-    return result;
-  }
-
   // Process a single MCP tool call
-  private async processMCPToolCall(toolName: string, apiExecution: any): Promise<string> {
-    let result = `\n\n[Calling MCP tool: ${toolName}]`;
+  private async processMCPToolCall(toolName: string, params: any): Promise<string> {
+    let result = `\n\n[Calling HTTP MCP tool: ${toolName}]`;
     
     try {
-      if (!apiExecution.apiParams) {
-        return result + "\nError: No parameters provided for tool call";
-      }
-      
-      // Parse the API parameters
-      let params: any;
-      try {
-        params = JSON.parse(apiExecution.apiParams);
-      } catch (e) {
-        return result + `\nError parsing parameters: ${e instanceof Error ? e.message : String(e)}`;
-      }
-      
       result += `\nParameters: ${JSON.stringify(params, null, 2)}`;
       
-      // Call the MCP tool
-      console.log(`Calling MCP tool ${toolName} with params:`, params);
+      // Call the MCP tool via HTTP
+      console.log(`Calling HTTP MCP tool ${toolName} with params:`, params);
       const toolResponse = await this.mcp.callTool({
         name: toolName,
         arguments: params,
       });
       
-      console.log(`MCP tool ${toolName} response:`, toolResponse);
+      console.log(`HTTP MCP tool ${toolName} response:`, toolResponse);
       
       // Format the response
       if (toolResponse.content) {
@@ -312,7 +212,7 @@ class MCPClient {
         result += "\nNo content in tool response";
       }
     } catch (error) {
-      console.error(`Error calling MCP tool ${toolName}:`, error);
+      console.error(`Error calling HTTP MCP tool ${toolName}:`, error);
       result += `\nError: ${error instanceof Error ? error.message : String(error)}`;
     }
     
@@ -338,7 +238,8 @@ class MCPClient {
     }
     
     // Try partial matching
-    for (const [normalizedName, actualName] of this.toolNameMap.entries()) {
+    for (const entry of this.toolNameMap.entries()) {
+      const [normalizedName, actualName] = entry;
       if (normalizedName.includes(normalizedApiName) || normalizedApiName.includes(normalizedName)) {
         return actualName;
       }
@@ -352,17 +253,17 @@ class MCPClient {
   // Get context from MCP server
   private async getMCPContext(): Promise<Record<string, any>> {
     try {
-      // Since rpc doesn't exist, we'll create a simple mock context
-      console.log("Getting MCP context...");
+      console.log("Getting HTTP MCP context...");
       
-      // Return a mock context
+      // Return a mock context for HTTP
       return {
         timestamp: new Date().toISOString(),
-        source: "mcp-client",
-        mock: true
+        source: "mcp-http-client",
+        transport: "http",
+        serverUrl: "http://localhost:3001/mcp"
       };
     } catch (error) {
-      console.error("Error getting MCP context:", error);
+      console.error("Error getting HTTP MCP context:", error);
       return {};
     }
   }
@@ -374,7 +275,7 @@ class MCPClient {
     });
   
     try {
-      console.log("\nMCP Client with Bedrock Agent Started!");
+      console.log("\nHTTP MCP Client with Bedrock Agent Started!");
       console.log("Type your queries or 'quit' to exit.");
       console.log(`Session ID: ${this.sessionId}`);
   
@@ -384,8 +285,6 @@ class MCPClient {
           break;
         }
         await this.processQuery(message);
-        // The response is already printed during streaming, so we don't need to print it again
-        // Just add a newline for better formatting
         console.log("\n");
       }
     } finally {
@@ -396,30 +295,21 @@ class MCPClient {
   async cleanup() {
     try {
       await this.mcp.close();
-      console.log("MCP connection closed");
+      console.log("HTTP MCP connection closed");
     } catch (error) {
-      console.error("Error closing MCP connection:", error);
+      console.error("Error closing HTTP MCP connection:", error);
     }
   }
 }
 
 async function main() {
-  if (process.argv.length < 5) {
-    console.log("Usage: node index.js <path_to_server_script> <agent_id> <agent_alias_id>");
-    return;
-  }
-  //cd /Users/ayushbhanushali/Documents/mcpServer/videoTut/mcp-playground/mcp-client-bedrock-agent && node build/index.js /Users/ayushbhanushali/Documents/mcpServer/videoTut/mcp-playground/weather/build/index.js BF9XMRVPZZ BYCXBZM20W
-  const serverScriptPath = process.argv[2];
-
-  const agentId = process.argv[3];
-  const agentAliasId = process.argv[4];
-  const mcpClient = new MCPClient(agentId, agentAliasId);
+  const mcpClient = new HTTPMCPClient();
   
-  console.log(`Using Bedrock Agent ID: ${agentId}`);
-  console.log(`Using Bedrock Agent Alias ID: ${agentAliasId}`);
+  console.log(`Using Bedrock Agent ID: BF9XMRVPZZ`);
+  console.log(`Using Bedrock Agent Alias ID: BYCXBZM20W`);
   
   try {
-    await mcpClient.connectToServer(serverScriptPath);
+    await mcpClient.connectToHTTPServer("http://localhost:3001/mcp");
     await mcpClient.chatLoop();
   } catch (error) {
     console.error("Fatal error:", error);

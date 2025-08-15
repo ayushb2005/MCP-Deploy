@@ -21,21 +21,23 @@ For each group of related MCP tools, create an action group:
 4. Select "OpenAPI schema" as the definition method
 5. Create an OpenAPI schema that matches your MCP tools
 
-### Example OpenAPI Schema for Weather Tools
+### Correct OpenAPI Schema for Your Weather MCP Server
+
+Create **one action group** called "WeatherTools" with this OpenAPI schema:
 
 ```json
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "MCP Weather API",
+    "title": "Weather MCP Tools",
     "version": "1.0.0",
-    "description": "API for accessing weather data through MCP"
+    "description": "National Weather Service tools via MCP"
   },
   "paths": {
-    "/getCurrentWeather": {
+    "/get-alerts": {
       "post": {
-        "summary": "Get current weather for a location",
-        "operationId": "getCurrentWeather",
+        "summary": "Get weather alerts for a state",
+        "operationId": "get-alerts",
         "requestBody": {
           "required": true,
           "content": {
@@ -43,29 +45,26 @@ For each group of related MCP tools, create an action group:
               "schema": {
                 "type": "object",
                 "properties": {
-                  "location": {
+                  "state": {
                     "type": "string",
-                    "description": "Location to get weather for"
+                    "description": "Two-letter state code (e.g. CA, NY)",
+                    "pattern": "^[A-Z]{2}$"
                   }
                 },
-                "required": ["location"]
+                "required": ["state"]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Weather data",
+            "description": "Weather alerts for the state",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "location": { "type": "string" },
-                    "temperature": { "type": "number" },
-                    "condition": { "type": "string" },
-                    "humidity": { "type": "number" },
-                    "windSpeed": { "type": "number" }
+                    "alerts": { "type": "string" }
                   }
                 }
               }
@@ -74,10 +73,10 @@ For each group of related MCP tools, create an action group:
         }
       }
     },
-    "/getForecast": {
+    "/get-forecast": {
       "post": {
-        "summary": "Get weather forecast for a location",
-        "operationId": "getForecast",
+        "summary": "Get weather forecast for coordinates",
+        "operationId": "get-forecast",
         "requestBody": {
           "required": true,
           "content": {
@@ -85,41 +84,33 @@ For each group of related MCP tools, create an action group:
               "schema": {
                 "type": "object",
                 "properties": {
-                  "location": {
-                    "type": "string",
-                    "description": "Location to get forecast for"
+                  "latitude": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90,
+                    "description": "Latitude of the location"
                   },
-                  "days": {
-                    "type": "integer",
-                    "description": "Number of days for the forecast"
+                  "longitude": {
+                    "type": "number", 
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "Longitude of the location"
                   }
                 },
-                "required": ["location"]
+                "required": ["latitude", "longitude"]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Forecast data",
+            "description": "Weather forecast for the coordinates",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "location": { "type": "string" },
-                    "forecast": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "date": { "type": "string" },
-                          "condition": { "type": "string" },
-                          "highTemp": { "type": "number" },
-                          "lowTemp": { "type": "number" }
-                        }
-                      }
-                    }
+                    "forecast": { "type": "string" }
                   }
                 }
               }
@@ -134,23 +125,39 @@ For each group of related MCP tools, create an action group:
 
 ## 3. Configure Agent Instructions
 
-Add instructions to your agent to use MCP context and tools:
+Add these instructions to your agent (this matches your actual setup):
 
 ```
-You have access to MCP (Model Context Protocol) context and tools.
+You are a helpful weather assistant that can provide weather alerts and forecasts.
+
+You have access to MCP (Model Context Protocol) tools through action groups:
+
+get-alerts: Use this tool to get weather alerts for a US state
+Required parameter: state (two-letter state code, e.g., CA, NY)
+
+get-forecast: Use this tool to get weather forecast for a location
+Required parameters: latitude and longitude (numeric coordinates)
 
 MCP CONTEXT:
-The MCP context is available in the session attributes under the key "mcp-context". 
-This context contains information from the MCP server that you can use to answer questions.
+You can access MCP context data in the session attributes under the key "mcp_context". This contains valuable information that you should use when answering questions.
 
-MCP TOOLS:
-You can use the following MCP tools through the action groups:
-- MCPWeatherTools: Use these tools to get weather information
-  - getCurrentWeather: Get current weather for a location
-  - getForecast: Get weather forecast for a location
+When responding to user queries about weather:
+For state weather alerts, use the get-alerts tool with the appropriate state code.
 
-When answering questions about weather, first check the MCP context for relevant information.
-If the context doesn't have what you need, use the appropriate MCP tool to get the information.
+For location forecasts, use the get-forecast tool with the latitude and longitude.
+
+For any other weather-related questions, refer to TheWeatherGuide PDF from the knowledge base to provide accurate and detailed answers.
+
+Always explain the weather information in a clear, concise manner.
+
+If the user doesn't specify a location, ask them for one.
+
+Example coordinates for major US cities:
+New York City: 40.7128, -74.0060
+Los Angeles: 34.0522, -118.2437
+Chicago: 41.8781, -87.6298
+Houston: 29.7604, -95.3698
+Phoenix: 33.4484, -112.0740
 ```
 
 ## 4. Create an Agent Alias

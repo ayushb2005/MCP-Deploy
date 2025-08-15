@@ -1,0 +1,15 @@
+cd /Users/ayushbhanushali/Documents/mcpServer/videoTut/mcp-playground/weather && node build/http-server.js
+for starting the localhost server 
+
+cd /Users/ayushbhanushali/Documents/mcpServer/videoTut/mcp-playground/mcp-client-bedrock-agent && node build/http-client.js
+
+starting client
+
+https://www.youtube.com/watch?v=av2hOA7B0ks&t=489s
+https://github.com/syedzoherer/mcp-playground
+https://modelcontextprotocol.io/quickstart/client
+
+
+weather git:(main) ✗ node build/http-server.js
+cd ../mcp-client-bedrock-agent node build/http-client.js
+
